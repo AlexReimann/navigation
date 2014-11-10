@@ -105,6 +105,7 @@ target_link_libraries(costmap_2d
 
 add_library(layers
   plugins/footprint_layer.cpp
+  plugins/updateExtension_layer.cpp
   plugins/inflation_layer.cpp
   plugins/obstacle_layer.cpp
   plugins/static_layer.cpp
