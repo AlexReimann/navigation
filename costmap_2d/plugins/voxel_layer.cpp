@@ -301,12 +301,13 @@ void VoxelLayer::raytraceFreespace(const Observation& clearing_observation, doub
     double wpy = clearing_observation.cloud_->points[i].y;
     double wpz = clearing_observation.cloud_->points[i].z;
 
-    double distance = dist(ox, oy, oz, wpx, wpy, wpz);
-    double scaling_fact = 1.0;
-    scaling_fact = std::max(std::min(scaling_fact, (distance - 2 * resolution_) / distance), 0.0);
-    wpx = scaling_fact * (wpx - ox) + ox;
-    wpy = scaling_fact * (wpy - oy) + oy;
-    wpz = scaling_fact * (wpz - oz) + oz;
+//    double distance = dist(ox, oy, oz, wpx, wpy, wpz);
+//    double scaling_fact = 1.0;
+//    scaling_fact = std::max(std::min(scaling_fact, (distance - 2 * resolution_) / distance), 0.0);
+//    wpx = scaling_fact * (wpx - ox) + ox;
+//    wpy = scaling_fact * (wpy - oy) + oy;
+//    wpz = scaling_fact * (wpz - oz) + oz;
+
 
     double a = wpx - ox;
     double b = wpy - oy;
@@ -317,7 +318,7 @@ void VoxelLayer::raytraceFreespace(const Observation& clearing_observation, doub
     if (wpz > max_obstacle_height_)
     {
       //we know we want the vector's z value to be max_z
-      t = std::max(0.0, std::min(t, (max_obstacle_height_ - 0.01 - oz) / c));
+      t = std::max(0.0, std::min(t, (max_obstacle_height_ - oz) / c));//- 0.01 - oz) / c));
     }
     //and we can only raytrace down to the floor
     else if (wpz < origin_z_)
@@ -364,6 +365,8 @@ void VoxelLayer::raytraceFreespace(const Observation& clearing_observation, doub
 
       if( publish_clearing_points )
       {
+        mapToWorld3D((unsigned int)point_x, (unsigned int)point_y, (unsigned int)point_z, wpx, wpy, wpz);
+
         geometry_msgs::Point32 point;
         point.x = wpx;
         point.y = wpy;

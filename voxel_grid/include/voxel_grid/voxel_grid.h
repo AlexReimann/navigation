@@ -37,11 +37,7 @@
 #ifndef VOXEL_GRID_VOXEL_GRID_H
 #define VOXEL_GRID_VOXEL_GRID_H
 
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <math.h>
+#include <cmath>
 #include <limits.h>
 #include <algorithm>
 #include <ros/console.h>
@@ -295,12 +291,22 @@ private:
       error_c += abs_dc;
       if ((unsigned int)error_b >= abs_da)
       {
-        off_b(offset_b);
+        //adjusted not original Bresenham
+        at(offset, z_mask); //set voxel on the same line
+        off_b(offset_b); //go one line up
+        off_a(-offset_a); //go one column back
+        at(offset, z_mask); //set voxel
+        off_a(offset_a); //go back to next column
         error_b -= abs_da;
       }
       if ((unsigned int)error_c >= abs_da)
       {
-        off_c(offset_c);
+        //adjusted not original Bresenham
+        at(offset, z_mask); //set voxel on the same line
+        off_c(offset_c); //go one line up
+        off_a(-offset_a); //go one column back
+        at(offset, z_mask); //set voxel
+        off_a(offset_a); //go back to next column
         error_c -= abs_da;
       }
     }
