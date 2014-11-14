@@ -122,9 +122,9 @@ namespace voxel_grid {
     raytraceLine(cv, x0, y0, z0, x1, y1, z1, max_length);
   }
 
-  void VoxelGrid::clearVoxelLineInMap(double x0, double y0, double z0, double x1, double y1, double z1, unsigned char *map_2d, 
+  void VoxelGrid::clearVoxelLineInMap(double x0, double y0, double z0, double x1, double y1, double z1, unsigned char *map_2d,
       unsigned int unknown_threshold, unsigned int mark_threshold, unsigned char free_cost, unsigned char unknown_cost, unsigned int max_length){
-    costmap = map_2d;
+    costmap_ = map_2d;
     if(map_2d == NULL){
       clearVoxelLine(x0, y0, z0, x1, y1, z1, max_length);
       return;
@@ -136,8 +136,74 @@ namespace voxel_grid {
       return;
     }
 
-    ClearVoxelInMap cvm(data_, costmap, unknown_threshold, mark_threshold, free_cost, unknown_cost);
+    ClearVoxelInMap cvm(data_, costmap_, unknown_threshold, mark_threshold, free_cost, unknown_cost);
     raytraceLine(cvm, x0, y0, z0, x1, y1, z1, max_length);
+  }
+
+  void VoxelGrid::update(double x0, double y0, double z0, double x1, double y1, double z1, unsigned int max_length, bool* updated_columns)
+  {
+//    Updater updater(data_, updated_columns, size_x_ * size_y_);
+//    raytraceLine(updater, x0, y0, z0, x1, y1, z1, max_length);
+  }
+
+void VoxelGrid::updatePadded(uint32_t* padded_data, bool* updated_columns, double x0, double y0, double z0, double x1,
+                             double y1, double z1, unsigned int max_length, unsigned int padding_size)
+{
+    unsigned int y_offset = size_x_ + (padding_size * 2);
+
+    int dx = int(x1) - int(x0);
+    int dy = int(y1) - int(y0);
+    int dz = int(z1) - int(z0);
+
+    unsigned int abs_dx = abs(dx);
+    unsigned int abs_dy = abs(dy);
+    unsigned int abs_dz = abs(dz);
+
+    int offset_dx = sign(dx);
+    int offset_dy = sign(dy) * y_offset;
+    int offset_dz = sign(dz);
+
+    unsigned int z_mask = ((1 << 16) | 1) << (unsigned int)z0;
+    unsigned int offset = (unsigned int)y0 * y_offset + (unsigned int)x0;
+
+    GridOffset grid_off(offset);
+    ZOffset z_off(z_mask);
+
+    //we need to chose how much to scale our dominant dimension, based on the maximum length of the line
+    double dist = sqrt((x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1) + (z0 - z1) * (z0 - z1));
+    double scale = std::min(1.0,  max_length / dist);
+
+    //is x dominant
+    if (abs_dx >= max(abs_dy, abs_dz))
+    {
+      int error_y = abs_dx / 2;
+      int error_z = abs_dx / 2;
+
+      UpdaterPaddedDominantX updater(padded_data, updated_columns, y_offset);
+//      Updater updater(padded_data, updated_columns);
+      bresenham3D(updater, grid_off, grid_off, z_off, abs_dx, abs_dy, abs_dz, error_y, error_z, offset_dx, offset_dy, offset_dz, offset, z_mask, (unsigned int)(scale * abs_dx));
+      return;
+    }
+
+    //y is dominant
+    if (abs_dy >= abs_dz)
+    {
+      int error_x = abs_dy / 2;
+      int error_z = abs_dy / 2;
+
+      UpdaterPaddedDominantY updater(padded_data, updated_columns);
+//      Updater updater(padded_data, updated_columns);
+      bresenham3D(updater, grid_off, grid_off, z_off, abs_dy, abs_dx, abs_dz, error_x, error_z, offset_dy, offset_dx, offset_dz, offset, z_mask, (unsigned int)(scale * abs_dy));
+      return;
+    }
+
+    //otherwise, z is dominant
+    int error_x = abs_dz / 2;
+    int error_y = abs_dz / 2;
+
+    UpdaterPaddedDominantZ updater(padded_data, updated_columns, y_offset);
+//    Updater updater(padded_data, updated_columns);
+    bresenham3D(updater, z_off, grid_off, grid_off, abs_dz, abs_dx, abs_dy, error_x, error_y, offset_dz, offset_dx, offset_dy, offset, z_mask, (unsigned int)(scale * abs_dz));
   }
 
   VoxelStatus VoxelGrid::getVoxel(unsigned int x, unsigned int y, unsigned int z)

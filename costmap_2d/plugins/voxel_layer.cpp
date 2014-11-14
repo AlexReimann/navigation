@@ -59,9 +59,9 @@ void VoxelLayer::onInitialize()
 
   private_nh.param("publish_voxel_map", publish_voxel_, false);
   if (publish_voxel_)
-    voxel_pub_ = private_nh.advertise < costmap_2d::VoxelGrid > ("voxel_grid", 1);
+    voxel_pub_ = private_nh.advertise<costmap_2d::VoxelGrid>("voxel_grid", 1);
 
-  clearing_endpoints_pub_ = private_nh.advertise<sensor_msgs::PointCloud>( "clearing_endpoints", 1 );
+  clearing_endpoints_pub_ = private_nh.advertise<sensor_msgs::PointCloud>("clearing_endpoints", 1);
   combination_method_ = 1;
 
 }
@@ -69,14 +69,14 @@ void VoxelLayer::onInitialize()
 void VoxelLayer::setupDynamicReconfigure(ros::NodeHandle& nh)
 {
   dsrv_ = new dynamic_reconfigure::Server<costmap_2d::VoxelPluginConfig>(nh);
-  dynamic_reconfigure::Server<costmap_2d::VoxelPluginConfig>::CallbackType cb = boost::bind(
-      &VoxelLayer::reconfigureCB, this, _1, _2);
+  dynamic_reconfigure::Server<costmap_2d::VoxelPluginConfig>::CallbackType cb = boost::bind(&VoxelLayer::reconfigureCB,
+                                                                                            this, _1, _2);
   dsrv_->setCallback(cb);
 }
 
 VoxelLayer::~VoxelLayer()
 {
-  if(dsrv_)
+  if (dsrv_)
     delete dsrv_;
 }
 
@@ -114,8 +114,8 @@ void VoxelLayer::resetMaps()
   voxel_grid_.reset();
 }
 
-void VoxelLayer::updateBounds(double robot_x, double robot_y, double robot_yaw, double* min_x,
-                                       double* min_y, double* max_x, double* max_y)
+void VoxelLayer::updateBounds(double robot_x, double robot_y, double robot_yaw, double* min_x, double* min_y,
+                              double* max_x, double* max_y)
 {
   if (rolling_window_)
     updateOrigin(robot_x - getSizeInMetersX() / 2, robot_y - getSizeInMetersY() / 2);
@@ -264,8 +264,129 @@ void VoxelLayer::clearNonLethal(double wx, double wy, double w_size_x, double w_
   }
 }
 
-void VoxelLayer::raytraceFreespace(const Observation& clearing_observation, double* min_x, double* min_y,
-                                           double* max_x, double* max_y)
+void VoxelLayer::raytraceFreespaceOld(const Observation& clearing_observation, double* min_x_bound, double* min_y_bound,
+                                      double* max_x_bound, double* max_y_bound)
+{
+  if (clearing_observation.cloud_->points.size() == 0)
+    return;
+
+  double start_point_x = 0;
+  double start_point_y = 0;
+  double start_point_z = 0;
+
+  if (!worldToMap3DFloat(clearing_observation.origin_.x, clearing_observation.origin_.y, clearing_observation.origin_.z,
+                         start_point_x, start_point_y, start_point_z))
+  {
+    ROS_WARN_THROTTLE(
+        1.0,
+        "The start point of the ray at (%.2f, %.2f, %.2f) is out of map bounds and can't be raytraced. Is the sensor outside of the map bounds?",
+        clearing_observation.origin_.x, clearing_observation.origin_.y, clearing_observation.origin_.z);
+    return;
+  }
+
+  bool publish_clearing_points = (clearing_endpoints_pub_.getNumSubscribers() > 0);
+  if (publish_clearing_points)
+  {
+    clearing_endpoints_.points.clear();
+    clearing_endpoints_.points.reserve(clearing_observation.cloud_->points.size());
+  }
+
+  //we can pre-compute the enpoints of the map outside of the inner loop... we'll need these later
+  double map_end_x = origin_x_ + getSizeInMetersX();
+  double map_end_y = origin_y_ + getSizeInMetersY();
+
+  //we work in voxel grid coordinates
+  double max_x = 0;
+  double max_y = 0;
+  double max_z = 0;
+
+  double min_x = 0;
+  double min_y = 0;
+  double min_z = 0;
+
+  worldToMap3DFloatRaw(map_end_x, map_end_y, max_obstacle_height_, max_x, max_y, max_z);
+  worldToMap3DFloatRaw(origin_x_, origin_y_, origin_z_, min_x, min_y, min_z);
+
+  //pre-initialisation
+  double end_point_x = 0;
+  double end_point_y = 0;
+  double end_point_z = 0;
+  double dx, dy, dz;
+  double abs_dx, abs_dy, abs_dz;
+  double scaling = 1.0;
+
+  for (unsigned int i = 0; i < clearing_observation.cloud_->points.size(); ++i)
+  {
+    worldToMap3DFloatRaw(clearing_observation.cloud_->points[i].x, clearing_observation.cloud_->points[i].y,
+                         clearing_observation.cloud_->points[i].z, end_point_x, end_point_y, end_point_z);
+
+    dx = end_point_x - start_point_x;
+    dy = end_point_y - start_point_y;
+    dz = end_point_z - start_point_z;
+
+    //calculation for dominant axis
+    //this assumes that our coordinates are always positive
+
+    scaling = 1.0;
+
+    if (end_point_x > max_x)
+      scaling = std::min(scaling, (max_x - start_point_x) / dx);
+    else if (end_point_x < min_x)
+      scaling = std::min(scaling, (start_point_x - min_x) / dx);
+
+    if (end_point_y > max_y)
+      scaling = std::min(scaling, (max_y - start_point_y) / dy);
+    else if (end_point_y < min_y)
+      scaling = std::min(scaling, (start_point_y - min_y) / dy);
+
+    if (end_point_z > max_z)
+      scaling = std::min(scaling, (max_z - start_point_z) / dz);
+    else if (end_point_z < min_z)
+      scaling = std::min(scaling, (start_point_z - min_z) / dz);
+
+    end_point_x = start_point_x + scaling * dx;
+    end_point_y = start_point_y + scaling * dy;
+    end_point_z = start_point_z + scaling * dz;
+
+    unsigned int cell_raytrace_range = cellDistance(clearing_observation.raytrace_range_);
+
+    //voxel_grid_.markVoxelLine(sensor_x, sensor_y, sensor_z, point_x, point_y, point_z);
+//    voxel_grid_.clearVoxelLineInMap(sensor_x, sensor_y, sensor_z, point_x, point_y, point_z, costmap_,
+//                                    unknown_threshold_, mark_threshold_, FREE_SPACE, NO_INFORMATION,
+//                                    cell_raytrace_range);
+//
+//    updateRaytraceBounds(ox, oy, wpx, wpy, clearing_observation.raytrace_range_, min_x, min_y, max_x, max_y);
+
+    if (publish_clearing_points)
+    {
+      double point_x, point_y, point_z;
+      mapToWorld3DFloat(end_point_x, end_point_y, end_point_z, point_x, point_y, point_z);
+
+      geometry_msgs::Point32 point;
+      point.x = point_x;
+      point.y = point_y;
+      point.z = point_z;
+      clearing_endpoints_.points.push_back(point);
+    }
+  }
+
+  if (publish_clearing_points)
+  {
+    clearing_endpoints_.header.frame_id = global_frame_;
+    clearing_endpoints_.header.stamp = pcl_conversions::fromPCL(clearing_observation.cloud_->header).stamp;
+    clearing_endpoints_.header.seq = clearing_observation.cloud_->header.seq;
+
+    clearing_endpoints_pub_.publish(clearing_endpoints_);
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+void VoxelLayer::raytraceFreespace(const Observation& clearing_observation, double* min_x, double* min_y, double* max_x,
+                                   double* max_y)
 {
   if (clearing_observation.cloud_->points.size() == 0)
     return;
@@ -285,18 +406,47 @@ void VoxelLayer::raytraceFreespace(const Observation& clearing_observation, doub
   }
 
   bool publish_clearing_points = (clearing_endpoints_pub_.getNumSubscribers() > 0);
-  if( publish_clearing_points )
+  if (publish_clearing_points)
   {
     clearing_endpoints_.points.clear();
-    clearing_endpoints_.points.reserve( clearing_observation.cloud_->points.size() );
+    clearing_endpoints_.points.reserve(clearing_observation.cloud_->points.size());
   }
 
   //we can pre-compute the enpoints of the map outside of the inner loop... we'll need these later
   double map_end_x = origin_x_ + getSizeInMetersX();
   double map_end_y = origin_y_ + getSizeInMetersY();
 
+//  ROS_WARN("Before loop -----------------------------------------------");
+
+  unsigned int voxel_grid_size = voxel_grid_.sizeX() * voxel_grid_.sizeY();
+
+  std::set<std::pair<unsigned int, unsigned int> > updatedStuff;
+
+  struct timeval start, end, start_loop, end_loop, start_looping, end_looping;
+  double start_t, end_t, t_diff, ratio;
+  gettimeofday(&start_looping, NULL);
+
+  unsigned int padding_size = 1; //only use 1 for now
+  unsigned int padded_voxel_grid_size = voxel_grid_size;
+  padded_voxel_grid_size += voxel_grid_.sizeX() * 2 * padding_size; //upper and lower padding
+  padded_voxel_grid_size += voxel_grid_.sizeY() * 2 * padding_size; //left and right padding
+  padded_voxel_grid_size += padding_size * padding_size * 4; //add the four corners
+
+  uint32_t* padded_voxel_grid_mask = new uint32_t[padded_voxel_grid_size];
+
+  uint32_t empty_mask = (uint32_t)0;
+  for(int i = 0; i < padded_voxel_grid_size; ++i)
+    padded_voxel_grid_mask[i] = empty_mask;
+
+  bool* updatedColumns = new bool[padded_voxel_grid_size];
+
+  for(int i = 0; i < padded_voxel_grid_size; ++i)
+    updatedColumns[i] = false;
+
   for (unsigned int i = 0; i < clearing_observation.cloud_->points.size(); ++i)
   {
+    gettimeofday(&start_loop, NULL);
+
     double wpx = clearing_observation.cloud_->points[i].x;
     double wpy = clearing_observation.cloud_->points[i].y;
     double wpz = clearing_observation.cloud_->points[i].z;
@@ -308,7 +458,6 @@ void VoxelLayer::raytraceFreespace(const Observation& clearing_observation, doub
 //    wpy = scaling_fact * (wpy - oy) + oy;
 //    wpz = scaling_fact * (wpz - oz) + oz;
 
-
     double a = wpx - ox;
     double b = wpy - oy;
     double c = wpz - oz;
@@ -318,7 +467,7 @@ void VoxelLayer::raytraceFreespace(const Observation& clearing_observation, doub
     if (wpz > max_obstacle_height_)
     {
       //we know we want the vector's z value to be max_z
-      t = std::max(0.0, std::min(t, (max_obstacle_height_ - oz) / c));//- 0.01 - oz) / c));
+      t = std::max(0.0, std::min(t, (max_obstacle_height_ - oz) / c)); //- 0.01 - oz) / c));
     }
     //and we can only raytrace down to the floor
     else if (wpz < origin_z_)
@@ -356,33 +505,59 @@ void VoxelLayer::raytraceFreespace(const Observation& clearing_observation, doub
     {
       unsigned int cell_raytrace_range = cellDistance(clearing_observation.raytrace_range_);
 
-      //voxel_grid_.markVoxelLine(sensor_x, sensor_y, sensor_z, point_x, point_y, point_z);
-      voxel_grid_.clearVoxelLineInMap(sensor_x, sensor_y, sensor_z, point_x, point_y, point_z, costmap_,
-                                      unknown_threshold_, mark_threshold_, FREE_SPACE, NO_INFORMATION,
-                                      cell_raytrace_range);
+//      voxel_grid_.update(sensor_x, sensor_y, sensor_z, point_x, point_y, point_z, cell_raytrace_range, updatedColumns);
+      voxel_grid_.updatePadded(padded_voxel_grid_mask, updatedColumns, sensor_x, sensor_y, sensor_z, point_x, point_y, point_z, cell_raytrace_range, padding_size);
 
       updateRaytraceBounds(ox, oy, wpx, wpy, clearing_observation.raytrace_range_, min_x, min_y, max_x, max_y);
 
-      if( publish_clearing_points )
+      if (publish_clearing_points)
       {
         mapToWorld3D((unsigned int)point_x, (unsigned int)point_y, (unsigned int)point_z, wpx, wpy, wpz);
-
         geometry_msgs::Point32 point;
         point.x = wpx;
         point.y = wpy;
         point.z = wpz;
-        clearing_endpoints_.points.push_back( point );
+        clearing_endpoints_.points.push_back(point);
       }
     }
   }
 
-  if( publish_clearing_points )
+  gettimeofday(&end_looping, NULL);
+  start_t = start_looping.tv_sec + double(start_looping.tv_usec) / 1e6;
+  end_t = end_looping.tv_sec + double(end_looping.tv_usec) / 1e6;
+  t_diff = end_t - start_t;
+
+//  ROS_WARN("Loop time: %.9f", t_diff);
+
+
+  gettimeofday(&start, NULL);
+  voxel_grid_.updateGrid(padded_voxel_grid_mask, padding_size);
+  gettimeofday(&end, NULL);
+
+  start_t = start.tv_sec + double(start.tv_usec) / 1e6;
+  end_t = end.tv_sec + double(end.tv_usec) / 1e6;
+  t_diff = end_t - start_t;
+
+//  ROS_WARN("update grid time: %.9f", t_diff);
+
+
+  gettimeofday(&start, NULL);
+  voxel_grid_.updateCostmap(costmap_, updatedColumns, unknown_threshold_, mark_threshold_, FREE_SPACE, NO_INFORMATION, padding_size);
+  gettimeofday(&end, NULL);
+
+  start_t = start.tv_sec + double(start.tv_usec) / 1e6;
+  end_t = end.tv_sec + double(end.tv_usec) / 1e6;
+  t_diff = end_t - start_t;
+
+//  ROS_WARN("update costmap time: %.9f", t_diff);
+
+  if (publish_clearing_points)
   {
     clearing_endpoints_.header.frame_id = global_frame_;
     clearing_endpoints_.header.stamp = pcl_conversions::fromPCL(clearing_observation.cloud_->header).stamp;
     clearing_endpoints_.header.seq = clearing_observation.cloud_->header.seq;
 
-    clearing_endpoints_pub_.publish( clearing_endpoints_ );
+    clearing_endpoints_pub_.publish(clearing_endpoints_);
   }
 }
 
@@ -443,4 +618,4 @@ void VoxelLayer::updateOrigin(double new_origin_x, double new_origin_y)
   delete[] local_voxel_map;
 }
 
-}  // namespace costmap_2d
+} // namespace costmap_2d

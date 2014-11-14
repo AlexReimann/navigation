@@ -93,6 +93,8 @@ private:
   void clearNonLethal(double wx, double wy, double w_size_x, double w_size_y, bool clear_no_info);
   virtual void raytraceFreespace(const costmap_2d::Observation& clearing_observation, double* min_x, double* min_y,
                                  double* max_x, double* max_y);
+  virtual void raytraceFreespaceOld(const costmap_2d::Observation& clearing_observation, double* min_x, double* min_y,
+                                 double* max_x, double* max_y);
 
   dynamic_reconfigure::Server<costmap_2d::VoxelPluginConfig> *dsrv_;
 
@@ -117,6 +119,13 @@ private:
     return false;
   }
 
+  inline void worldToMap3DFloatRaw(double wx, double wy, double wz, double& mx, double& my, double& mz)
+  {
+    mx = ((wx - origin_x_) / resolution_);
+    my = ((wy - origin_y_) / resolution_);
+    mz = ((wz - origin_z_) / z_resolution_);
+  }
+
   inline bool worldToMap3D(double wx, double wy, double wz, unsigned int& mx, unsigned int& my, unsigned int& mz)
   {
     if (wx < origin_x_ || wy < origin_y_ || wz < origin_z_)
@@ -132,12 +141,25 @@ private:
     return false;
   }
 
+  inline void adjustToPadding(double& wx, double& wy, double& wz)
+  {
+
+  }
+
   inline void mapToWorld3D(unsigned int mx, unsigned int my, unsigned int mz, double& wx, double& wy, double& wz)
   {
     //returns the center point of the cell
     wx = origin_x_ + (mx + 0.5) * resolution_;
     wy = origin_y_ + (my + 0.5) * resolution_;
     wz = origin_z_ + (mz + 0.5) * z_resolution_;
+  }
+
+  inline void mapToWorld3DFloat(double mx, double my, double mz, double& wx, double& wy, double& wz)
+  {
+    //returns the center point of the cell
+    wx = origin_x_ + mx * resolution_;
+    wy = origin_y_ + my * resolution_;
+    wz = origin_z_ + mz * z_resolution_;
   }
 
   inline double dist(double x0, double y0, double z0, double x1, double y1, double z1)
