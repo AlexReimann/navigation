@@ -141,11 +141,6 @@ private:
     return false;
   }
 
-  inline void adjustToPadding(double& wx, double& wy, double& wz)
-  {
-
-  }
-
   inline void mapToWorld3D(unsigned int mx, unsigned int my, unsigned int mz, double& wx, double& wy, double& wz)
   {
     //returns the center point of the cell

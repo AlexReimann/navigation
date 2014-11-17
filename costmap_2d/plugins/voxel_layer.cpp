@@ -167,15 +167,17 @@ void VoxelLayer::updateBounds(double robot_x, double robot_y, double robot_yaw, 
 
       //now we need to compute the map coordinates for the observation
       unsigned int mx, my, mz;
-      if (cloud.points[i].z < origin_z_)
-      {
-        if (!worldToMap3D(cloud.points[i].x, cloud.points[i].y, origin_z_, mx, my, mz))
-          continue;
-      }
-      else if (!worldToMap3D(cloud.points[i].x, cloud.points[i].y, cloud.points[i].z, mx, my, mz))
-      {
+//      if (cloud.points[i].z < origin_z_)
+//      {
+//        if (!worldToMap3D(cloud.points[i].x, cloud.points[i].y, origin_z_, mx, my, mz))
+//          continue;
+//      }
+//      else if (!worldToMap3D(cloud.points[i].x, cloud.points[i].y, cloud.points[i].z, mx, my, mz))
+//      {
+//        continue;
+//      }
+      if (!worldToMap3D(cloud.points[i].x, cloud.points[i].y, cloud.points[i].z, mx, my, mz))
         continue;
-      }
 
       //mark the cell in the voxel grid and check if we should also mark it in the costmap
       if (voxel_grid_.markVoxelInMap(mx, my, mz, mark_threshold_))
@@ -512,7 +514,7 @@ void VoxelLayer::raytraceFreespace(const Observation& clearing_observation, doub
 
       if (publish_clearing_points)
       {
-        mapToWorld3D((unsigned int)point_x, (unsigned int)point_y, (unsigned int)point_z, wpx, wpy, wpz);
+//        mapToWorld3D((unsigned int)point_x, (unsigned int)point_y, (unsigned int)point_z, wpx, wpy, wpz);
         geometry_msgs::Point32 point;
         point.x = wpx;
         point.y = wpy;

@@ -170,8 +170,8 @@ void VoxelGrid::updatePadded(uint32_t* padded_data, bool* updated_columns, doubl
     ZOffset z_off(z_mask);
 
     //we need to chose how much to scale our dominant dimension, based on the maximum length of the line
-    double dist = sqrt((x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1) + (z0 - z1) * (z0 - z1));
-    double scale = std::min(1.0,  max_length / dist);
+//    double dist = sqrt((x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1) + (z0 - z1) * (z0 - z1));
+    double scale = 1;//std::min(1.0,  max_length / dist);
 
     //is x dominant
     if (abs_dx >= max(abs_dy, abs_dz))
