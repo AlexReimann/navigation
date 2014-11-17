@@ -527,7 +527,7 @@ void VoxelLayer::raytraceFreespace(const Observation& clearing_observation, doub
   end_t = end_looping.tv_sec + double(end_looping.tv_usec) / 1e6;
   t_diff = end_t - start_t;
 
-//  ROS_WARN("Loop time: %.9f", t_diff);
+  ROS_WARN("Loop time: %.9f", t_diff);
 
 
   gettimeofday(&start, NULL);

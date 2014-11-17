@@ -417,21 +417,21 @@ public:
 
     inline void operator()(unsigned int offset, unsigned int z_mask)
     {
-      padded_data_[offset] &= z_mask;
+      padded_data_[offset] |= z_mask;
       updated_columns_[offset] = true;
 
       //padding x, data is padded so no under / overflow should happen
-      padded_data_[offset+1] &= z_mask;
+      padded_data_[offset+1] |= z_mask;
       updated_columns_[offset+1] = true;
 
-      padded_data_[offset-1] &= z_mask;
+      padded_data_[offset-1] |= z_mask;
       updated_columns_[offset-1] = true;
 
       //padding y, data is padded so no under / overflow should happen
-      padded_data_[offset+offset_y_] &= z_mask;
+      padded_data_[offset+offset_y_] |= z_mask;
       updated_columns_[offset+offset_y_] = true;
 
-      padded_data_[offset-offset_y_] &= z_mask;
+      padded_data_[offset-offset_y_] |= z_mask;
       updated_columns_[offset-offset_y_] = true;
     }
 
