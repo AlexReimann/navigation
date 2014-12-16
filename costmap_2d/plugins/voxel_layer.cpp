@@ -25,6 +25,8 @@ void VoxelLayer::onInitialize()
     voxel_pub_ = private_nh.advertise < costmap_2d::VoxelGrid > ("voxel_grid", 1);
 
   clearing_endpoints_pub_ = private_nh.advertise<sensor_msgs::PointCloud>( "clearing_endpoints", 1 );
+  cleared_points_pub_ = private_nh.advertise<sensor_msgs::PointCloud>( "cleared_points", 1 );
+
   combination_method_ = 1;
 
   private_nh.param("raytrace_corner_cases", raytrace_corner_cases_, false);
@@ -251,6 +253,12 @@ void VoxelLayer::raytraceFreespace(const Observation& clearing_observation, doub
   unsigned int updated_area_width = floor(max_raytrace_range_ / resolution_) * 2 + 1 + 2 * padding_size;
   unsigned int max_updated_area_size = pow(updated_area_width, 2); // | padding | raytrace | center | raytrace | padding
 
+  double temp = 0;
+
+  //need to add the residual to have the same sub-cell-accuracy starting offset for Bresenham algorithm
+  double offset_x = update_area_center + fabs(modf(sensor_x, &temp));
+  double offset_y = update_area_center + fabs(modf(sensor_y, &temp));
+
   boost::shared_ptr<uint32_t[]> padded_voxel_grid_mask(new uint32_t[max_updated_area_size]);
   uint32_t empty_mask = (uint32_t)0;
 
@@ -324,16 +332,18 @@ void VoxelLayer::raytraceFreespace(const Observation& clearing_observation, doub
     {
       unsigned int cell_raytrace_range = cellDistance(clearing_observation.raytrace_range_);
 
-      voxel_grid_.updateClearingMask(padded_voxel_grid_mask, updatedColumns, updated_area_width, update_area_center,
-                                     update_area_center, sensor_z, update_area_center + point_x - (int)sensor_x,
-                                     update_area_center + point_y - (int)sensor_y, point_z, cell_raytrace_range,
-                                     raytrace_corner_cases_, padded_raytracing_);
-
       if (use_accurate_bresenham_)
       {
-        voxel_grid_.updateClearingMaskNew(padded_voxel_grid_mask, updatedColumns, updated_area_width, update_area_center,
+        voxel_grid_.updateClearingMaskNew(padded_voxel_grid_mask, updatedColumns, updated_area_width, offset_x,
+                                          offset_y, sensor_z, offset_x + (point_x - sensor_x),
+                                          offset_y + (point_y - sensor_y), point_z, cell_raytrace_range);
+      }
+      else
+      {
+        voxel_grid_.updateClearingMask(padded_voxel_grid_mask, updatedColumns, updated_area_width, update_area_center,
                                        update_area_center, sensor_z, update_area_center + point_x - (int)sensor_x,
-                                       update_area_center + point_y - (int)sensor_y, point_z, cell_raytrace_range);
+                                       update_area_center + point_y - (int)sensor_y, point_z, cell_raytrace_range,
+                                       raytrace_corner_cases_, padded_raytracing_);
       }
 
       updateRaytraceBounds(ox, oy, wpx, wpy, clearing_observation.raytrace_range_, min_x, min_y, max_x, max_y);
@@ -352,6 +362,15 @@ void VoxelLayer::raytraceFreespace(const Observation& clearing_observation, doub
   voxel_grid_.updateGrid(padded_voxel_grid_mask, updated_area_width, (int)sensor_x - update_area_center, (int)sensor_y - update_area_center);
   voxel_grid_.updateCostmap(costmap_, updatedColumns, updated_area_width, (int)sensor_x - update_area_center, (int)sensor_y - update_area_center, unknown_threshold_, mark_threshold_, FREE_SPACE, NO_INFORMATION);
 
+  setUpdatedCells(updatedColumns, updated_area_width, (int)sensor_x - update_area_center, (int)sensor_y - update_area_center);
+
+  voxel_grid_.updateGrid(padded_voxel_grid_mask, updated_area_width, (int)sensor_x - update_area_center, (int)sensor_y - update_area_center);
+
+  bool publish_cleared_points = (cleared_points_pub_.getNumSubscribers() > 0);
+
+  if(publish_cleared_points)
+    publishClearedCells(padded_voxel_grid_mask, updated_area_width, (int)sensor_x - update_area_center, (int)sensor_y - update_area_center, sensor_z);
+
   if( publish_clearing_points )
   {
     clearing_endpoints_.header.frame_id = global_frame_;
@@ -360,6 +379,134 @@ void VoxelLayer::raytraceFreespace(const Observation& clearing_observation, doub
 
     clearing_endpoints_pub_.publish( clearing_endpoints_ );
   }
+}
+
+void VoxelLayer::setUpdatedCells(boost::shared_ptr<bool[]> updated_columns, unsigned int updated_area_width, unsigned int offset_x, unsigned int offset_y)
+{
+  updated_cells_index_.clear();
+
+  unsigned int linear_index = 0;
+  unsigned int linear_index_offset = 0;
+  int x = 0;
+  int y = 0;
+
+  for (unsigned int row_index = 0; row_index < updated_area_width; ++row_index)
+  {
+    linear_index = row_index * updated_area_width;
+    y = row_index + offset_y;
+    if (y < 0)
+      continue;
+
+    if (y >= size_y_)
+      break;
+
+    x = offset_x;
+
+    linear_index_offset = y * size_x_ + x;
+    for (unsigned int column_index = 0; column_index < updated_area_width; ++column_index)
+    {
+      if (!updated_columns[linear_index] || x < 0)
+      {
+        x++;
+        linear_index++;
+        linear_index_offset++;
+        continue;
+      }
+
+      if (x >= size_x_)
+        break;
+
+      MapLocation cell_location;
+      cell_location.x = x;
+      cell_location.y = y;
+
+      updated_cells_index_.push_back(cell_location);
+
+      x++;
+      linear_index_offset++;
+      linear_index++;
+    }
+  }
+}
+
+void VoxelLayer::publishClearedCells(boost::shared_ptr<uint32_t[]>& grid_mask, unsigned int updated_area_width, int offset_x, int offset_y, double sensor_z)
+{
+  uint32_t updateIndexMask;
+  sensor_msgs::PointCloud cleared_points;
+
+  cleared_points.points.reserve(updated_cells_index_.size());
+
+  unsigned int linear_index = 0;
+  unsigned int linear_index_offset = 0;
+
+  double max_map = 0;
+  double max_world = 0;
+
+  int x = 0;
+  int y = 0;
+
+  for (unsigned int row_index = 0; row_index < updated_area_width; ++row_index)
+  {
+    linear_index = row_index * updated_area_width;
+    y = row_index + offset_y;
+
+    if (y < 0)
+      continue;
+
+    if (y >= size_y_)
+      break;
+
+    x = offset_x;
+
+    linear_index_offset = y * size_x_ + x;
+
+    for (unsigned int column_index = 0; column_index < updated_area_width; ++column_index)
+    {
+      if (x < 0)
+      {
+        x++;
+        linear_index_offset++;
+        linear_index++;
+        continue;
+      }
+
+      if (x >= size_x_)
+        break;
+
+      updateIndexMask = grid_mask[linear_index] >> 1;
+
+      for (int z_index = 0; z_index < 16; ++z_index)
+      {
+        if ((updateIndexMask & 1) != 0)
+        {
+          double point_x, point_y, point_z;
+
+          mapToWorld3D(x, y, z_index, point_x, point_y, point_z);
+
+          geometry_msgs::Point32 point;
+          point.x = point_x;
+          point.y = point_y;
+          point.z = point_z;
+          cleared_points.points.push_back(point);
+
+          if(max_world < point_z)
+          {
+            max_world = point_z;
+          }
+
+        }
+        updateIndexMask >>= 1;
+      }
+
+      x++;
+      linear_index_offset++;
+      linear_index++;
+    }
+  }
+
+  cleared_points.header.frame_id = global_frame_;
+  cleared_points.header.stamp = ros::Time::now();
+  cleared_points_pub_.publish(cleared_points);
 }
 
 void VoxelLayer::updateOrigin(double new_origin_x, double new_origin_y)

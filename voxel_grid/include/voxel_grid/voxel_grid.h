@@ -383,7 +383,6 @@ namespace voxel_grid {
               at(offset, z_mask);
               off_a(offset_a);
 
-
               if(error_b >= 0)
               {
                 //adjusted not original Bresenham
@@ -415,15 +414,21 @@ namespace voxel_grid {
               error_b += abs_db;
               error_c += abs_dc;
           }
-          at(offset, z_mask);
       }
 
       inline int sign(int i){
-        return i > 0 ? 1 : -1;
+        return i >= 0 ? 1 : -1;
       }
 
       inline unsigned int max(unsigned int x, unsigned int y){
         return x > y ? x : y;
+      }
+
+      inline uint32_t convertUpdateMaskToZMask(uint32_t updateMask)
+      {
+        updateMask >>= 1; //revert lower padding
+        updateMask &= ~(1 << 16); //revert upper padding
+        return ((updateMask << 16) | updateMask);
       }
 
       unsigned int size_x_, size_y_, size_z_;
