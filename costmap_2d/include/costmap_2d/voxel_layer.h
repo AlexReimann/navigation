@@ -87,6 +87,7 @@ protected:
   std::list<MapLocation> updated_cells_index_;
 
   virtual void setUpdatedCells(boost::shared_ptr<bool[]> updated_columns, unsigned int updated_area_width, unsigned int offset_x, unsigned int offset_y);
+  virtual void publishClearedCells(boost::shared_ptr<uint32_t[]>& grid_mask, unsigned int updated_area_width, int offset_x, int offset_y, double sensor_z);
 
 private:
   void reconfigureCB(costmap_2d::VoxelPluginConfig &config, uint32_t level);
@@ -127,12 +128,14 @@ private:
   double z_resolution_, origin_z_;
   unsigned int unknown_threshold_, mark_threshold_, size_z_;
   ros::Publisher clearing_endpoints_pub_;
+  ros::Publisher cleared_points_pub_;
   sensor_msgs::PointCloud clearing_endpoints_;
 
   inline bool worldToMap3DFloat(double wx, double wy, double wz, double& mx, double& my, double& mz)
   {
     if (wx < origin_x_ || wy < origin_y_ || wz < origin_z_)
       return false;
+
     mx = ((wx - origin_x_) / resolution_);
     my = ((wy - origin_y_) / resolution_);
     mz = ((wz - origin_z_) / z_resolution_);
