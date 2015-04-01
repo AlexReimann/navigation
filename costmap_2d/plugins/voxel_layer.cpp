@@ -310,7 +310,7 @@ void VoxelLayer::raytraceFreespace(const Observation& clearing_observation, doub
   if (use_cached_updating_)
   {
     unsigned int max_raytrace_range_in_cells = std::floor(max_raytrace_range_ / resolution_);
-    unsigned int update_area_center = max_raytrace_range_in_cells + 1; // +1 to have a buffer
+    unsigned int update_area_center = max_raytrace_range_in_cells; // +1 to have a buffer
     cached_update_area_width = update_area_center * 2 + 1; //+1 to have a center point
 
     int offset_x = update_area_center - (int)sensor_x;

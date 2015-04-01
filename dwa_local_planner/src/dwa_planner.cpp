@@ -318,6 +318,8 @@ namespace dwa_local_planner {
     std::vector<base_local_planner::Trajectory> all_explored;
     scored_sampling_planner_.findBestTrajectory(result_traj_, &all_explored);
 
+    ROS_ERROR("Best traj: %f, %f, %f, %f", result_traj_.cost_, result_traj_.xv_, result_traj_.yv_, result_traj_.thetav_);
+
     if(publish_traj_pc_)
     {
         base_local_planner::MapGridCostPoint pt;
