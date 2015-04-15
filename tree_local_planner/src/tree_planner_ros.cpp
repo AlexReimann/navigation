@@ -9,7 +9,7 @@
 #include <ompl/control/spaces/RealVectorControlSpace.h>
 #include <tf/tf.h>
 #include <tf/transform_listener.h>
-
+#include <sstream>
 
 namespace tree_local_planner
 {
@@ -34,7 +34,8 @@ void TreePlannerROS::initialize(std::string name, tf::TransformListener* tf, cos
 
 //  planner_ = ompl::base::PlannerPtr(new ompl::geometric::LBTRRT(setup_space_information()));
 //  planner_ = ompl::base::PlannerPtr(new ompl::geometric::RRTstar(setup_space_information()));
-  planner_ = ompl::base::PlannerPtr(new ompl::control::RRT(setup_space_information()));
+//  planner_ = ompl::base::PlannerPtr(new ompl::control::RRT(setup_space_information()));
+  planner_ = ompl::base::PlannerPtr(new backward_rrt::BackwardRRT(setup_space_information()));
   planner_->setup();
 }
 
@@ -55,8 +56,8 @@ ompl::control::SpaceInformationPtr TreePlannerROS::setup_space_information()
   //set linear velocity bounds
 //  control_space_bounds.setLow(0.0);
 //  control_space_bounds.setHigh(1.0);
-  control_space_bounds.setLow(0, 0.0); // can't go backwards
-  control_space_bounds.setHigh(0, 1.0);
+  control_space_bounds.setLow(0, -1.0); // can't go backwards
+  control_space_bounds.setHigh(0, 0.0);
 
   //set angular velocity bounds
   control_space_bounds.setLow(1, -3.5); // can't go backwards
@@ -69,6 +70,8 @@ ompl::control::SpaceInformationPtr TreePlannerROS::setup_space_information()
   space_information->setStateValidityChecker(
       boost::bind(&TreePlannerROS::isStateValid, this, space_information.get(), _1));
   space_information->setStatePropagator(boost::bind(&propagate, _1, _2, _3, _4));
+  space_information->setPropagationStepSize(0.1);
+  space_information->setup();
 
   return space_information;
 }
@@ -189,8 +192,8 @@ geometry_msgs::Point TreePlannerROS::get_current_local_goal()
   geometry_msgs::PoseStamped goal_local;
   tf_listener_.transformPose("base_link", temp_goal_, goal_local);
 
-  local_goal.x = goal_local.pose.position.x;
-  local_goal.y = goal_local.pose.position.y;
+  local_goal.x = std::min(std::max(goal_local.pose.position.x, -1.9), 1.9);
+  local_goal.y = std::min(std::max(goal_local.pose.position.y, -1.9), 1.9);
 
   return local_goal;
 }
@@ -201,6 +204,7 @@ bool TreePlannerROS::computeVelocityCommands(geometry_msgs::Twist& cmd_vel)
   costmap_ros_->getRobotPose(current_pose);
 
   planner_->clear();
+
   ompl::base::StateSpacePtr work_space = planner_->getSpaceInformation()->getStateSpace();
 
   double angle_robot = atan2(current_pose.getOrigin().getY(), current_pose.getOrigin().getX());
@@ -223,12 +227,13 @@ bool TreePlannerROS::computeVelocityCommands(geometry_msgs::Twist& cmd_vel)
     return true;
   }
 
-  double angle_goal = atan2(local_goal.y, local_goal.x);
+  double angle_goal = atan2(local_goal.y, local_goal.x) - angle_robot;
 
   ob::ScopedState < ob::SE2StateSpace > goal(work_space);
   goal->setX(local_goal.x);
   goal->setY(local_goal.y);
   start->setYaw(0);
+  ///TODO correct angle goal
 
   ompl_visualizer_.add_big_marker("base_link", 0, local_goal.x, local_goal.y, 0, 0, 1, 0);
 
@@ -236,7 +241,7 @@ bool TreePlannerROS::computeVelocityCommands(geometry_msgs::Twist& cmd_vel)
 
   ob::ProblemDefinitionPtr planner_problem(new ob::ProblemDefinition(planner_->getSpaceInformation()));
   double goal_found_epsilon = 0.01;
-  planner_problem->setStartAndGoalStates(start, goal, goal_found_epsilon);
+  planner_problem->setStartAndGoalStates(goal, start, goal_found_epsilon);
   planner_->setProblemDefinition(planner_problem);
 
   double max_time = 0.1;
@@ -249,14 +254,28 @@ bool TreePlannerROS::computeVelocityCommands(geometry_msgs::Twist& cmd_vel)
     oc::PathControl local_path = static_cast<oc::PathControl&>(*(planner_problem->getSolutionPath()));
     local_path.interpolate();
 
-    oc::RealVectorControlSpace::ControlType* control = local_path.getControls()[0]->as<oc::RealVectorControlSpace::ControlType>();
+    oc::RealVectorControlSpace::ControlType* control = local_path.getControls()[local_path.getControls().size()-1]->as<oc::RealVectorControlSpace::ControlType>();
 
-    cmd_vel.linear.x = (*control)[0];
+    cmd_vel.linear.x = -(*control)[0];
     cmd_vel.linear.y = 0.0;
-    cmd_vel.angular.z = (*control)[1];
+    cmd_vel.angular.z = -(*control)[1];
 //    ROS_ERROR("Velocity commands x, angular: %f, %f", cmd_vel.linear.x, cmd_vel.angular.z);
 
-    ompl_visualizer_.visualize_path_states(local_path.getStates(), "base_link");
+    std::vector<ob::PlannerSolution> solutions = planner_problem->getSolutions();
+
+
+    ompl_visualizer_.visualize_path_states(local_path.getStates(), "base_link", "ompl");
+
+//    ROS_ERROR("solutions.size() %i", (int)solutions.size());
+//
+//    for(int i = 0; i < solutions.size(); ++i)
+//    {
+//      std::ostringstream Convert;
+//
+//      Convert << "path_";
+//      Convert << i;
+//      ompl_visualizer_.visualize_path_states(static_cast<oc::PathControl&>(*(solutions[i].path_)).getStates(), "base_link", Convert.str());
+//    }
   }
   else
     ROS_ERROR("No path found");

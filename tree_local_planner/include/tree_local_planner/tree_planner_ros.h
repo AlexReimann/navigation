@@ -19,6 +19,7 @@
 #include <ompl/control/planners/rrt/RRT.h>
 #include <ompl/geometric/planners/rrt/RRTstar.h>
 #include <ompl/geometric/planners/rrt/LBTRRT.h>
+#include <tree_local_planner/backward_RRT.h>
 
 #include <tree_local_planner/tree_planner.h>
 #include <ompl_visualization/ompl_visualization.h>
@@ -106,8 +107,8 @@ private:
   tf::TransformListener tf_listener_;
 
   bool goal_reached_;
-  geometry_msgs::PoseStamped temp_goal_;
-  geometry_msgs::Point global_local_goal_;
+  geometry_msgs::PoseStamped global_local_goal_;
+  geometry_msgs::Point ;
   ompl_visualization::OmplVisualization ompl_visualizer_;
 };
 }

@@ -24,7 +24,7 @@ void OmplVisualization::visualize(const ompl::base::PlannerDataPtr planner_data,
     const ompl::base::State *state = planner_data->getVertex(vertex_id).getState();
     const ompl::base::SE2StateSpace::StateType *casted_state =
         static_cast<const ompl::base::SE2StateSpace::StateType*>(state);
-    marker_array.markers.push_back(make_marker(frame_id, vertex_id, casted_state->getX(), casted_state->getY(), 0));
+    marker_array.markers.push_back(make_marker(frame_id, vertex_id, casted_state->getX(), casted_state->getY(), 0, "ompl"));
   }
 
   visualization_msgs::Marker marker;
@@ -43,7 +43,7 @@ void OmplVisualization::visualize(const ompl::base::PlannerDataPtr planner_data,
 //  marker_array_pub_.publish(marker_array);
 }
 
-void OmplVisualization::visualize_path_states(std::vector<ompl::base::State*>& states, std::string frame_id)
+void OmplVisualization::visualize_path_states(std::vector<ompl::base::State*>& states, std::string frame_id, std::string path_namespace)
 {
   visualization_msgs::MarkerArray marker_array;
   unsigned int vertex_id = 0;
@@ -52,7 +52,7 @@ void OmplVisualization::visualize_path_states(std::vector<ompl::base::State*>& s
   {
     const ompl::base::SE2StateSpace::StateType *casted_state =
         static_cast<const ompl::base::SE2StateSpace::StateType*>(states[i]);
-    marker_array.markers.push_back(make_marker(frame_id, i, casted_state->getX(), casted_state->getY(), 0));
+    marker_array.markers.push_back(make_marker(frame_id, i, casted_state->getX(), casted_state->getY(), 0, path_namespace));
   }
 
 //  visualization_msgs::Marker marker;
@@ -71,14 +71,14 @@ void OmplVisualization::visualize_path_states(std::vector<ompl::base::State*>& s
   marker_array_pub_.publish(marker_array);
 }
 
-visualization_msgs::Marker OmplVisualization::make_marker(std::string frame_id, int id, double x, double y, double z)
+visualization_msgs::Marker OmplVisualization::make_marker(std::string frame_id, int id, double x, double y, double z, std::string path_namespace)
 {
   visualization_msgs::Marker marker;
 
   marker.header.frame_id = frame_id;
   marker.header.stamp = ros::Time::now();
 
-  marker.ns = "ompl";
+  marker.ns = path_namespace;
   marker.id = id;
   marker.type = visualization_msgs::Marker::SPHERE;
   marker.action = visualization_msgs::Marker::ADD;
