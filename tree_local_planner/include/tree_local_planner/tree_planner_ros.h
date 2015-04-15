@@ -93,7 +93,6 @@ private:
 
   ompl::control::SpaceInformationPtr setup_space_information();
   bool update_local_goal_from_global_plan(const std::vector<geometry_msgs::PoseStamped>& orig_global_plan);
-  geometry_msgs::Point get_current_local_goal();
 
   inline int local_to_costmap(double coordinate)
   {
@@ -102,14 +101,24 @@ private:
     return coordinate;
   }
 
+  double yawFromQuaternion(tf::Quaternion quaternion)
+  {
+    tf::Matrix3x3 m(quaternion);
+    double roll, pitch, yaw;
+    m.getRPY(roll, pitch, yaw);
+
+    ROS_ERROR("roll, pitch, yaw: %f %f %f", roll, pitch, yaw);
+    return yaw;
+  }
+
   costmap_2d::Costmap2DROS* costmap_ros_;
   ompl::base::PlannerPtr planner_;
   tf::TransformListener tf_listener_;
 
   bool goal_reached_;
-  geometry_msgs::PoseStamped global_local_goal_;
-  geometry_msgs::Point ;
+  geometry_msgs::PoseStamped local_goal_;
   ompl_visualization::OmplVisualization ompl_visualizer_;
+  bool found_path_;
 };
 }
 ;

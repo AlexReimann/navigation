@@ -45,8 +45,8 @@ ompl::control::SpaceInformationPtr TreePlannerROS::setup_space_information()
 
   ompl::base::RealVectorBounds work_space_bounds(2);
   //set bounds for both dimensions (squared area)
-  work_space_bounds.setLow(-2);
-  work_space_bounds.setHigh(2);
+  work_space_bounds.setLow(-30);
+  work_space_bounds.setHigh(30);
 
   work_space->as<ompl::base::SE2StateSpace>()->setBounds(work_space_bounds);
 
@@ -70,7 +70,7 @@ ompl::control::SpaceInformationPtr TreePlannerROS::setup_space_information()
   space_information->setStateValidityChecker(
       boost::bind(&TreePlannerROS::isStateValid, this, space_information.get(), _1));
   space_information->setStatePropagator(boost::bind(&propagate, _1, _2, _3, _4));
-  space_information->setPropagationStepSize(0.1);
+  space_information->setPropagationStepSize(0.07);
   space_information->setup();
 
   return space_information;
@@ -79,12 +79,16 @@ ompl::control::SpaceInformationPtr TreePlannerROS::setup_space_information()
 bool TreePlannerROS::setPlan(const std::vector<geometry_msgs::PoseStamped>& orig_global_plan)
 {
   goal_reached_ = false;
+  found_path_ = false;
+
+  static_cast<backward_rrt::BackwardRRT&>(*planner_).reset_next_neigbhours();
+
   return update_local_goal_from_global_plan(orig_global_plan);
 }
 
 bool TreePlannerROS::update_local_goal_from_global_plan(const std::vector<geometry_msgs::PoseStamped>& global_plan)
 {
-  if(global_plan.size() == 0)
+  if (global_plan.size() == 0)
     return false;
 
   std::vector<geometry_msgs::PoseStamped>::const_iterator global_plan_it = global_plan.begin();
@@ -99,12 +103,10 @@ bool TreePlannerROS::update_local_goal_from_global_plan(const std::vector<geomet
   double x = global_robot_pose.getOrigin().getX();
   double y = global_robot_pose.getOrigin().getY();
 
-  ROS_INFO("x: %f; y: %f", x, y);
+  ROS_INFO("global_plan size: %i", (int)global_plan.size());
 
   double dx = 0;
   double dy = 0;
-
-  ROS_INFO("global_plan size: %i", (int)global_plan.size());
 
   while (global_plan_it != global_plan.end())
   {
@@ -112,16 +114,9 @@ bool TreePlannerROS::update_local_goal_from_global_plan(const std::vector<geomet
     dy = fabs(global_plan_it->pose.position.y - y);
 
     if (dx >= 2 || dy >= 2)
-    {
+      return true;
 
-//      ROS_INFO("local goal search ended at local map border");
-      return true;;
-    }
-
-//    ROS_INFO("dx: %f; dy: %f; pos: %f, %f", dx, dy, global_plan_it->pose.position.x, global_plan_it->pose.position.y);
-    global_local_goal_.x = global_plan_it->pose.position.x;
-    global_local_goal_.y = global_plan_it->pose.position.y;
-    temp_goal_ = *global_plan_it;
+    local_goal_ = *global_plan_it;
 
     global_plan_it++;
   }
@@ -149,15 +144,15 @@ bool TreePlannerROS::isStateValid(const oc::SpaceInformation *si, const ob::Stat
 //  ROS_INFO("original x, y: %f %f", x, y);
 //  ROS_INFO("transformed x, y: %i %i", local_to_costmap(x), local_to_costmap(y));
 
-  if (x < -2 || x > 2 || y < -2 || y > 2)
+  if (x < -30 || x > 30 || y < -30 || y > 30)
     return false;
 
   ///TODO test if footprint hits obstacle
-  if (costmap_ros_->getCostmap()->getCost(local_to_costmap(x), local_to_costmap(y)) == costmap_2d::LETHAL_OBSTACLE)
-  {
-    ROS_ERROR("Path hit obstacle!");
-    return false;
-  }
+//  if (costmap_ros_->getCostmap()->getCost(local_to_costmap(x), local_to_costmap(y)) == costmap_2d::LETHAL_OBSTACLE)
+//  {
+//    ROS_ERROR("Path hit obstacle!");
+//    return false;
+//  }
 
   // return a value that is always true but uses the two variables we define, so we avoid compiler warnings
   return si->satisfiesBounds(state) && (const void*)rot != (const void*)pos;
@@ -168,56 +163,44 @@ bool TreePlannerROS::isGoalReached()
   return goal_reached_;
 }
 
-geometry_msgs::Point TreePlannerROS::get_current_local_goal()
-{
-  tf::Stamped<tf::Pose> costmap_robot_pose;
-  costmap_ros_->getRobotPose(costmap_robot_pose);
-
-  tf::Stamped<tf::Pose> global_robot_pose;
-  ///TODO dynamic frame id
-  tf_listener_.transformPose("map", costmap_robot_pose, global_robot_pose);
-
-  geometry_msgs::Point local_goal;
-  local_goal.x = global_robot_pose.getOrigin().getX() - global_local_goal_.x;
-  local_goal.y = global_robot_pose.getOrigin().getY() - global_local_goal_.y;
-
-  temp_goal_.header.stamp = ros::Time::now();
-
-  try {
-    tf_listener_.waitForTransform("base_link", "map", temp_goal_.header.stamp, ros::Duration(1.0) );
-  } catch (tf::TransformException ex) {
-      ROS_ERROR("%s",ex.what());
-  }
-
-  geometry_msgs::PoseStamped goal_local;
-  tf_listener_.transformPose("base_link", temp_goal_, goal_local);
-
-  local_goal.x = std::min(std::max(goal_local.pose.position.x, -1.9), 1.9);
-  local_goal.y = std::min(std::max(goal_local.pose.position.y, -1.9), 1.9);
-
-  return local_goal;
-}
-
 bool TreePlannerROS::computeVelocityCommands(geometry_msgs::Twist& cmd_vel)
 {
-  tf::Stamped<tf::Pose> current_pose;
-  costmap_ros_->getRobotPose(current_pose);
+  tf::Stamped<tf::Pose> local_robot_pose;
+  costmap_ros_->getRobotPose(local_robot_pose);
+
+  tf::Stamped<tf::Pose> global_robot_pose;
+  tf_listener_.transformPose(local_goal_.header.frame_id, local_robot_pose, global_robot_pose);
 
   planner_->clear();
 
-  ompl::base::StateSpacePtr work_space = planner_->getSpaceInformation()->getStateSpace();
+  if(!found_path_)
+  {
+    static_cast<backward_rrt::BackwardRRT&>(*planner_).setGoalBias(0.05);
+    static_cast<backward_rrt::BackwardRRT&>(*planner_).reset_next_neigbhours();
+  }
+  else
+  {
+    static_cast<backward_rrt::BackwardRRT&>(*planner_).setGoalBias(0.3);
+  }
 
-  double angle_robot = atan2(current_pose.getOrigin().getY(), current_pose.getOrigin().getX());
+  ompl::base::StateSpacePtr work_space = planner_->getSpaceInformation()->getStateSpace();
 
   ob::ScopedState < ob::SE2StateSpace > start(work_space);
   //always in the center
-  start->setX(0.0);
-  start->setY(0.0);
-  start->setYaw(0);
+  start->setX(global_robot_pose.getOrigin().getX());
+  start->setY(global_robot_pose.getOrigin().getY());
+  start->setYaw(yawFromQuaternion(local_robot_pose.getRotation()));
 
-  geometry_msgs::Point local_goal = get_current_local_goal();
+  tf::Quaternion goal_angle_quaternion;
+  tf::quaternionMsgToTF(local_goal_.pose.orientation, goal_angle_quaternion);
 
-  if(fabs(local_goal.x) < 0.1  && fabs(local_goal.y) < 0.1)
+  ob::ScopedState < ob::SE2StateSpace > goal(work_space);
+  goal->setX(local_goal_.pose.position.x);
+  goal->setY(local_goal_.pose.position.y);
+  goal->setYaw(yawFromQuaternion(goal_angle_quaternion));
+  ///TODO correct angle goal
+
+  if (fabs(goal->getX() - start->getX()) < 0.1 && fabs(goal->getY() - start->getY()) < 0.1)
   {
     ROS_ERROR("Goal reached");
     goal_reached_ = true;
@@ -227,44 +210,53 @@ bool TreePlannerROS::computeVelocityCommands(geometry_msgs::Twist& cmd_vel)
     return true;
   }
 
-  double angle_goal = atan2(local_goal.y, local_goal.x) - angle_robot;
+  static_cast<backward_rrt::BackwardRRT&>(*planner_).update_start_if_needed(&(*goal));
 
-  ob::ScopedState < ob::SE2StateSpace > goal(work_space);
-  goal->setX(local_goal.x);
-  goal->setY(local_goal.y);
-  start->setYaw(0);
-  ///TODO correct angle goal
+  ompl_visualizer_.add_big_marker("map", 0, goal->getX(), goal->getY(), 0, 0, 1, 0);
 
-  ompl_visualizer_.add_big_marker("base_link", 0, local_goal.x, local_goal.y, 0, 0, 1, 0);
-
-//  ROS_ERROR("RRT goal x, y, w: %f %f %f", local_goal.x, local_goal.y, angle_goal);
+  ROS_ERROR("RRT start x, y, w: %f %f %f", start->getX(), start->getY(), start->getYaw());
+  ROS_ERROR("RRT goal x, y, w: %f %f %f", goal->getX(), goal->getY(), goal->getYaw());
 
   ob::ProblemDefinitionPtr planner_problem(new ob::ProblemDefinition(planner_->getSpaceInformation()));
-  double goal_found_epsilon = 0.01;
+  double goal_found_epsilon = 0.1;
   planner_problem->setStartAndGoalStates(goal, start, goal_found_epsilon);
   planner_->setProblemDefinition(planner_problem);
 
-  double max_time = 0.1;
+  double max_time = 0.05;
   ob::PlannerStatus solved = planner_->solve(max_time);
 
-  if(solved)
+  if (solved)
   {
     ROS_WARN("local path found!");
 
     oc::PathControl local_path = static_cast<oc::PathControl&>(*(planner_problem->getSolutionPath()));
     local_path.interpolate();
 
-    oc::RealVectorControlSpace::ControlType* control = local_path.getControls()[local_path.getControls().size()-1]->as<oc::RealVectorControlSpace::ControlType>();
+    oc::RealVectorControlSpace::ControlType* control =
+        local_path.getControls()[local_path.getControls().size() - 1]->as<oc::RealVectorControlSpace::ControlType>();
 
-    cmd_vel.linear.x = -(*control)[0];
-    cmd_vel.linear.y = 0.0;
-    cmd_vel.angular.z = -(*control)[1];
+    if (solved == ompl::base::PlannerStatus::EXACT_SOLUTION)
+    {
+      found_path_ = true;
+      cmd_vel.linear.x = -(*control)[0];
+      cmd_vel.linear.y = 0.0;
+      cmd_vel.angular.z = -(*control)[1];
+
+      static_cast<backward_rrt::BackwardRRT&>(*planner_).remove_goal(&(*start), local_path.getControls().size());
+    }
+    else
+    {
+      found_path_ = false;
+      cmd_vel.linear.x = 0;
+      cmd_vel.linear.y = 0.0;
+      cmd_vel.angular.z = 0;
+      ROS_ERROR("No exact solution found, not moving");
+    }
 //    ROS_ERROR("Velocity commands x, angular: %f, %f", cmd_vel.linear.x, cmd_vel.angular.z);
 
     std::vector<ob::PlannerSolution> solutions = planner_problem->getSolutions();
 
-
-    ompl_visualizer_.visualize_path_states(local_path.getStates(), "base_link", "ompl");
+    ompl_visualizer_.visualize_path_states(local_path.getStates(), "map", "ompl");
 
 //    ROS_ERROR("solutions.size() %i", (int)solutions.size());
 //
@@ -274,7 +266,7 @@ bool TreePlannerROS::computeVelocityCommands(geometry_msgs::Twist& cmd_vel)
 //
 //      Convert << "path_";
 //      Convert << i;
-//      ompl_visualizer_.visualize_path_states(static_cast<oc::PathControl&>(*(solutions[i].path_)).getStates(), "base_link", Convert.str());
+//      ompl_visualizer_.visualize_path_states(static_cast<oc::PathControl&>(*(solutions[i].path_)).getStates(), "map", Convert.str());
 //    }
   }
   else

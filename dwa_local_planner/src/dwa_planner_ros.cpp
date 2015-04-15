@@ -247,8 +247,6 @@ namespace dwa_local_planner {
   }
 
 
-
-
   bool DWAPlannerROS::computeVelocityCommands(geometry_msgs::Twist& cmd_vel) {
     // dispatches to either dwa sampling control or stop and rotate control, depending on whether we have been close enough to goal
     if ( ! costmap_ros_->getRobotPose(current_pose_)) {
@@ -260,6 +258,8 @@ namespace dwa_local_planner {
       ROS_ERROR("Could not get local plan");
       return false;
     }
+
+    ROS_ERROR("current_pose_: %f, %f", current_pose_.getOrigin().getX(), current_pose_.getOrigin().getY());
 
     //if the global plan passed in is empty... we won't do anything
     if(transformed_plan.empty()) {
