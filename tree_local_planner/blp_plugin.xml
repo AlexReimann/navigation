@@ -1,0 +1,7 @@
+<library path="lib/libtree_local_planner">
+  <class name="tree_local_planner/TreePlannerROS" type="tree_local_planner::TreePlannerROS" base_class_type="nav_core::BaseLocalPlanner">
+    <description>
+      TODO
+    </description>
+  </class>
+</library>
